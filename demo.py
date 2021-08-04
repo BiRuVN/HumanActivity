@@ -2,65 +2,57 @@ import os
 import cv2
 import numpy as np
 import random
+from collections import deque
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.models import Model, Sequential
 from tensorflow.keras.layers import *
 
-WIDTH = 128
-HEIGHT = 128
+WIDTH = 64
+HEIGHT = 64
 CHANNEL = 3
-nb_frame = 8
+classes_list = ['PushUps', 'JumpRope', 'Lunges']
+total_avg_frame = 25
+skip_frame = 2
+count_skip_frame = 0
 
-model = tf.keras.models.load_model('./models/convnet-lstm-1807-20-0.0267.h5')
+model = tf.keras.models.load_model('./models/cnnavg-0408.h5')
 model.summary()
 
-cap = cv2.VideoCapture(0)
+cam = cv2.VideoCapture(0)
 
-cld = {0: 'PullUps', 1: 'PushUps', 2: 'JumpRope'}
-seq = []
-step_frame = 2
-step = 0
+seq = deque(maxlen = total_avg_frame)
 while True:
-	ret, frame = cap.read()
-	if not ret:
-		break
+    ret, frame = cam.read()
+    if not ret:
+        break
 
-	cv2.imshow('cam', frame)
+    cv2.imshow('frame', frame)
 
-	if frame is None:
-		print("frame is None")
-		break
+    if count_skip_frame < skip_frame:
+        count_skip_frame += 1
+        continue
+    count_skip_frame = 0
+    frame = cv2.resize(frame, (HEIGHT, WIDTH))/255.0
 
-	if step != step_frame:
-		step += 1
-		continue
+    ip = np.expand_dims(frame, 0)
+    pred = model.predict(ip)[0]
+    
+    if len(seq) < total_avg_frame:
+        seq.append(pred)
+        continue
+    seq.append(pred)
+    seq_np = np.array(seq)
+    seq_mean = seq_np.mean(axis=0)
+    cl = classes_list[np.argmax(seq_mean)]
 
-	step = 0
-	frame = cv2.resize(frame, (WIDTH, HEIGHT))
+    if np.max(seq_mean) > 0.99:
+        print(f"{cl} with {np.max(seq_mean)}")
+    else:
+        print(f"Break with {np.max(seq_mean)}")
 
-	if len(seq) < nb_frame:
-		seq.append(frame)
-		continue
+    if cv2.waitKey(1) == 27:
+        break
 
-	seq = seq[1:] + [frame]
-
-	ip = np.expand_dims(np.array(seq), axis=0)
-
-	pred = model.predict(ip)[0]
-	pred_id = np.argmax(pred, axis=1)
-	c = max(list(pred_id), key=list(pred_id).count)
-	# if pred[pred_id] < 0.8:
-	# 	print(f"Break with confidence {pred[pred_id]}")
-	# else:
-	# 	print(cld[pred_id], f" with confidence {pred[pred_id]}")
-	
-	if np.sum(pred_id==c) < 6:
-		print(f"Break with confidence {np.sum(pred_id==c)}")
-	else:
-		print(cld[c], f" with confidence {np.sum(pred_id==c)}")
-
-	if cv2.waitKey(1) == 27:
-		break
-cap.release()
+cam.release()
 cv2.destroyAllWindows()
